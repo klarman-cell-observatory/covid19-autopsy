@@ -1,0 +1,21 @@
+AT1	AT1	HOPX	LAMA3	CD55
+AT2	AT2	SFTPA1	SFTPC	NAPSA	CTSH	LAMP3	ABCA3
+Ciliated cell	Ciliated cell	MAPK10	EYA1	FGF14
+Secretory cell	Secretory cell	SCGB1A1	MUC5B	MET
+B cell	B cell	CD19	MS4A1	CD79A	CD79B	BLK
+Plasma cell	Plasma cell	CD38	SLAMF7	POU2AF1
+CD4+ T cell	CD4+ T cell	CD3D	CD3E	CD3G	TRAC	CD4	IL7R
+CD8+ T cell	CD8+ T cell	CD3D	CD3E	CD3G	TRAC	CD8A	CD8B	GZMA	FYN
+NK cell	NK cell	NCAM1	NKG7	ITGAL	ITGB2	KLRD1	KLRF1	CD247	GNLY	PRF1
+Macrophage	Macrophage	CD68	CD163	C1QA	MRC1	MS4A6A	MSR1	MERTK	SLC11A1
+Mast cell	Mast cell	KIT	CPA3	AREG	SAMSN1
+Vascular endothelial cell	Vascular endothelial cell	PECAM1	CDH5	ENG	FLT1	DOCK9
+Lymphatic endothelial cell	Lymphatic endothelial cell	PECAM1	RELN	CD36	CCL21	EFNA5
+Pericytes	Pericytes	PDGFRB	PTEN	LAMC3
+Smooth muscle cell	Smooth muscle cell	ACTA2	LTBP1	ACTB
+Fibroblast	Fibroblast	COL1A2	SETBP1	RORA
+Myofibroblast	Myofibroblast	COL1A2	COL3A1	C1S	C1R	RPLP0
+Mesothelial cell	Mesothelial cell	WT1	C3	CACNA2D3	NFKBIZ	EFNA5
+Basal cell	Basal cell	KRT5	NGFR	TP63	KRT14	ITGB4
+Neutrophil	Neutrophil	FUT4	MPO	CEACAM8	ELANE	CXCR1	CXCR2
+Virus	Virus	S	ORF1ab
