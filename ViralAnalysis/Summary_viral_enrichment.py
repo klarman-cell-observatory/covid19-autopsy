@@ -57,7 +57,7 @@ def viral_enrichment_score(data, cluster_col, viral_count_col, suffix=""):
     total_infCells = sum(obs_perClust)
     exp_perClust = (n_perClust / n_total) * total_infCells
 
-    enrichment_perClust = pd.DataFrame(np.log(0.0001+obs_perClust/exp_perClust))
+    enrichment_perClust = pd.DataFrame(np.log(0.0001+obs_perClust/0.0001+exp_perClust))
     enrichment_perClust[enrichment_perClust==-Inf]=0
     new_col_name = "Enrichment_"+suffix
     enrichment_perClust = enrichment_perClust.rename(columns={0:new_col_name})
@@ -112,7 +112,7 @@ def viral_enrichment_significance(data, clusters_col, save_str, perm_no):
         real_enrichments = data.obs[[clusters_col, "Enrichment_"]].drop_duplicates().set_index(clusters_col)
         FDR= {}
         for clust in set(data.obs[clusters_col]):
-            FDR[clust] = sum(float(real_enrichments.loc[clust]) < enrich_df.loc[clust,:]) / perm_no
+            FDR[clust] = (sum(float(real_enrichments.loc[clust]) <= enrich_df.loc[clust,:])+1) / (perm_no+1)
         FDR_df = pd.DataFrame.from_dict(FDR, orient="index").reset_index().rename(columns={"index":"clusters",0:"FDR"})
         FDR_df.to_csv(save_str+"_FDRs.csv")
     else:
