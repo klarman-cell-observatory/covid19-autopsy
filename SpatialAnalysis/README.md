@@ -111,9 +111,9 @@ When finished, it generates the following output:
 |`Figure_4/Figure_4c_left.pdf`|Left part of **Figure 4C** in paper. DE volcano plot on WTA PanCK+ AOIs.|
 |`Figure_4/Figure_4c_left_DE.up.csv`|Up-regulated genes for subjects on WTA PanCK+ AOIs. Part of **Extended Data Table 6(b)** in paper.|
 |`Figure_4/Figure_4c_left_DE.down.csv`|Up-regulated genes for controls on WTA PanCK+ AOIs. Part of **Extended Data Table 6(b)** in paper.|
-|`ED_Figure_8/ED_Figure_8j_left.pdf`|Left part of **Extended Data Figure 8J** in paper. DE volcano plot on WTA PanCK- AOIs.|
-|`ED_Figure_8/ED_Figure_8j_left_DE.up.csv`|Up-regulated genes for subjects on WTA PanCK- AOIs. Part of **Extended Data Table 6(b)** in paper.|
-|`ED_Figure_8/ED_Figure_8j_left_DE.down.csv`|Up-regulated genes for controls on WTA PanCK+ AOIs. Part of **Extended Data Table 6(b)** in paper.|
+|`ED_Figure_8/ED_Figure_8h_left.pdf`|Left part of **Extended Data Figure 8H** in paper. DE volcano plot on WTA PanCK- AOIs.|
+|`ED_Figure_8/ED_Figure_8h_left_DE.up.csv`|Up-regulated genes for subjects on WTA PanCK- AOIs. Part of **Extended Data Table 6(b)** in paper.|
+|`ED_Figure_8/ED_Figure_8h_left_DE.down.csv`|Up-regulated genes for controls on WTA PanCK+ AOIs. Part of **Extended Data Table 6(b)** in paper.|
 
 The following command executes for CTA data:
 
@@ -124,12 +124,12 @@ When finished, it generates the following output:
 
 |File|Description|
 |---|---|
-|`ED_Figure_8/ED_Figure_8h_left.pdf`|Left part of **Extended Data Figure 8H** in paper. DE volcano plot on CTA PanCK+ AOIs.|
-|`ED_Figure_8/ED_Figure_8h_left_DE.up.csv`|Up-regulated genes for subjects on CTA PanCK+ AOIs. Part of **Extended Data Table 6(c)** in paper.|
-|`ED_Figure_8/ED_Figure_8h_left_DE.down.csv`|Up-regulated genes for controls on CTA PanCK+ AOIs. Part of **Extended Data Table 6(c)** in paper.|
-|`ED_Figure_8/ED_Figure_8i_left.pdf`|Left part of **Extended Data Figure 8I** in paper. DE volcano plot on CTA PanCK- AOIs.|
-|`ED_Figure_8/ED_Figure_8i_left_DE.up.csv`|Up-regulated genes for subjects on CTA PanCK- AOIs. Part of **Extended Data Table 6(c)** in paper.|
-|`ED_Figure_8/ED_Figure_8i_left_DE.down.csv`|Up-regulated genes for controls on CTA PanCK- AOIs. Part of **Extended Data Table 6(c)** in paper.|
+|`ED_Figure_8/ED_Figure_8i_left.pdf`|Left part of **Extended Data Figure 8I** in paper. DE volcano plot on CTA PanCK+ AOIs.|
+|`ED_Figure_8/ED_Figure_8i_left_DE.up.csv`|Up-regulated genes for subjects on CTA PanCK+ AOIs. Part of **Extended Data Table 6(c)** in paper.|
+|`ED_Figure_8/ED_Figure_8i_left_DE.down.csv`|Up-regulated genes for controls on CTA PanCK+ AOIs. Part of **Extended Data Table 6(c)** in paper.|
+|`ED_Figure_8/ED_Figure_8j_left.pdf`|Left part of **Extended Data Figure 8J** in paper. DE volcano plot on CTA PanCK- AOIs.|
+|`ED_Figure_8/ED_Figure_8j_left_DE.up.csv`|Up-regulated genes for subjects on CTA PanCK- AOIs. Part of **Extended Data Table 6(c)** in paper.|
+|`ED_Figure_8/ED_Figure_8j_left_DE.down.csv`|Up-regulated genes for controls on CTA PanCK- AOIs. Part of **Extended Data Table 6(c)** in paper.|
 
 When both analyses are finished, run the following command to generate GSEA bar plots:
 
@@ -142,12 +142,12 @@ which gives the following output:
 |---|---|
 |`Figure_4/Figure_4c_right.H.up.png`|Significant pathways for subjects on WTA PanCK+ AOIs. Right part of **Figure 4C** in paper, but in bar plot.|
 |`Figure_4/Figure_4c_right.H.down.png`|Significant pathways for controls on WTA PanCK+ AOIs. Right part of **Figure 4C** in paper, but in bar plot.|
-|`ED_Figure_8/ED_Figure_8j_right.H.up.png`|Significant pathways for subjects on WTA PanCK- AOIs. Right part of **Extended Data Figure 8J** in paper, but in bar plot.|
-|`ED_Figure_8/ED_Figure_8j_right.H.down.png`|Significant pathways for controls on WTA PanCK- AOIs. Right part of **Extended Data Figure 8J** in paper, but in bar plot.|
-|`ED_Figure_8/ED_Figure_8h_right.H.up.png`|Significant pathways for subjects on CTA PanCK+ AOIs. Right part of **Extended Data Figure 8H** in paper, but in bar plot.|
-|`ED_Figure_8/ED_Figure_8h_right.H.down.png`|Significant pathways for controls on CTA PanCK+ AOIs. Right part of **Extended Data Figure 8H** in paper, but in bar plot.|
-|`ED_Figure_8/ED_Figure_8i_right.H.up.png`|Significant pathways for subjects on CTA PanCK- AOIs. Right part of **Extended Data Figure 8I** in paper, but in bar plot.|
-|`ED_Figure_8/ED_Figure_8i_right.H.down.png`|Significant pathways for controls on CTA PanCK- AOIs. Right part of **Extended Data Figure 8I** in paper, but in bar plot.|
+|`ED_Figure_8/ED_Figure_8h_right.H.up.png`|Significant pathways for subjects on WTA PanCK- AOIs. Right part of **Extended Data Figure 8H** in paper, but in bar plot.|
+|`ED_Figure_8/ED_Figure_8h_right.H.down.png`|Significant pathways for controls on WTA PanCK- AOIs. Right part of **Extended Data Figure 8H** in paper, but in bar plot.|
+|`ED_Figure_8/ED_Figure_8i_right.H.up.png`|Significant pathways for subjects on CTA PanCK+ AOIs. Right part of **Extended Data Figure 8I** in paper, but in bar plot.|
+|`ED_Figure_8/ED_Figure_8i_right.H.down.png`|Significant pathways for controls on CTA PanCK+ AOIs. Right part of **Extended Data Figure 8I** in paper, but in bar plot.|
+|`ED_Figure_8/ED_Figure_8j_right.H.up.png`|Significant pathways for subjects on CTA PanCK- AOIs. Right part of **Extended Data Figure 8J** in paper, but in bar plot.|
+|`ED_Figure_8/ED_Figure_8j_right.H.down.png`|Significant pathways for controls on CTA PanCK- AOIs. Right part of **Extended Data Figure 8J** in paper, but in bar plot.|
 
 ### 4.2. Between SARS-CoV-2 high and low AOIs
 

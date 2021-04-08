@@ -51,9 +51,9 @@ if (!dir.exists("ED_Figure_8")) {
 
 ## PanCK+
 top.table21 <- analyze_by_contrasts(cta.segments, cta.counts, c('PanCK'), 'group', c('C', 'S'))
-gen_de_csv(top.table21, "ED_Figure_8/ED_Figure_8h_left_DE")
+gen_de_csv(top.table21, "ED_Figure_8/ED_Figure_8i_left_DE")
 
-pdf("ED_Figure_8/ED_Figure_8h_left.pdf", width=10, height=10)
+pdf("ED_Figure_8/ED_Figure_8i_left.pdf", width=10, height=10)
 EnhancedVolcano(top.table21,
     lab = rownames(top.table21),
     x = 'logFC',
@@ -67,9 +67,9 @@ dev.off()
 
 ## PanCK-
 top.table22 <- analyze_by_contrasts(cta.segments, cta.counts, c('Syto13'), 'group', c('C', 'S'))
-gen_de_csv(top.table22, "ED_Figure_8/ED_Figure_8i_left_DE")
+gen_de_csv(top.table22, "ED_Figure_8/ED_Figure_8j_left_DE")
 
-pdf("ED_Figure_8/ED_Figure_8i_left.pdf", width=10, height=10)
+pdf("ED_Figure_8/ED_Figure_8j_left.pdf", width=10, height=10)
 EnhancedVolcano(top.table22,
     lab = rownames(top.table22),
     x = 'logFC',
@@ -84,5 +84,5 @@ dev.off()
 #######################################
 # Gene Set Enrichment Analysis (GSEA) #
 #######################################
-gen_pathway_csv(top.table21, "ED_Figure_8/ED_Figure_8h_gsea", seed=0)
-gen_pathway_csv(top.table22, "ED_Figure_8/ED_Figure_8i_gsea", seed=0)
+gen_pathway_csv(top.table21, "ED_Figure_8/ED_Figure_8i_gsea", seed=0)
+gen_pathway_csv(top.table22, "ED_Figure_8/ED_Figure_8j_gsea", seed=0)
