@@ -216,6 +216,13 @@ def bar_infected_per_cluster_stacked(data, cluster_col, save_str=""):
 ########################################
 # 1) Enrichment scores - general umap
 ########################################
+def get_obsCol_and_umap(adata, obsCol, file_name):
+    tmp = adata.obs[obsCol].copy()
+    umap = pd.DataFrame(adata.obsm["X_umap"], columns=["UMAP1","UMAP2"], index= tmp.index)
+    final = pd.concat([tmp, umap], axis=1)
+    final.to_excel(file_name)
+
+
 all_data = an.read_h5ad("LungData.h5ad") # Use the full file of data available in the single Cell Portal: https://singlecell.broadinstitute.org/single_cell/study/SCP1052/covid-19-lung-autopsy-samples
 
 # Focusing on the 7 patients with viral+ cells
@@ -223,6 +230,7 @@ focus_patients = ["D3","D6","D7","D10","D11","D13","D16"]
 data = all_data[all_data.obs["donor"].isin(focus_patients),:].copy()
 
 viral_enrichment_pipeline(data=data, cluster_col="Cluster", title="All", save_str="All_7patients", patient_specific=False, all_or_subclustering="all")
+get_obsCol_and_umap(data, obsCol=["Cluster", "Enrichment_"], file_name="../DataForFigures/Fig3a_new.xlsx")
 
 ########################################
 # 2) Enrichment per patient
@@ -232,6 +240,7 @@ for p in focus_patients:
     print("***"+p+"+***")
     curr_data = all_data[all_data.obs["donor"]==p,:].copy()
     viral_enrichment_pipeline(data=curr_data, cluster_col="Cluster", title=p, save_str=p, patient_specific=True, all_or_subclustering="all")
+    get_obsCol_and_umap(curr_data, obsCol="Enrichment_", file_name="../DataForFigures/ED_Fig7g_"+p+".xlsx")
 
 
 
