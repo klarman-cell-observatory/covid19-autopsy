@@ -354,6 +354,7 @@ def composition_barplot(adata, xattr, yattr, title, save_str="", cmap=None, fig_
     else:
         plt.savefig(save_str+".pdf")
 
+# The files for final subclustering are available in the Single Cell Portal at: https://singlecell.broadinstitute.org/single_cell/study/SCP1052/covid-19-lung-autopsy-samples
 Mac_cells = an.read_h5ad("Myeloid.h5ad")
 T_NK_cells = an.read_h5ad("T_NK.h5ad")
 B_Plasma_cells = an.read_h5ad("B_Plasma.h5ad")
