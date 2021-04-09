@@ -27,8 +27,8 @@ from statsmodels.stats.multitest import fdrcorrection
 
 def viral_enrichment_pipeline(data, cluster_col, title, save_str, patient_specific, all_or_subclustering):
     viral_enrichment_score(data, cluster_col, "Viral+")
-    viral_enrichment_umap(data, enrichment_score="Enrichment_"+enrichment_name, save_str=save_str, title= title, all_or_subclustering=all_or_subclustering)
-    FDRs = viral_enrichment_significance(data, cluster_col, enrichment_name, save_str=save_str, perm_no=1000)
+    viral_enrichment_umap(data, enrichment_score="Enrichment_", save_str=save_str, title= title, all_or_subclustering=all_or_subclustering)
+    FDRs = viral_enrichment_significance(data, cluster_col, save_str=save_str, perm_no=1000)
     bar_infected_per_cluster(data = data, cluster_col=cluster_col, FDR_per_cluster=FDRs,title=title, save_str=save_str)
     if not patient_specific:
         bar_infected_per_cluster_stacked(data, cluster_col, save_str=save_str)
@@ -57,7 +57,7 @@ def viral_enrichment_score(data, cluster_col, viral_count_col, suffix=""):
     total_infCells = sum(obs_perClust)
     exp_perClust = (n_perClust / n_total) * total_infCells
 
-    enrichment_perClust = pd.DataFrame(np.log(0.0001+obs_perClust/0.0001+exp_perClust))
+    enrichment_perClust = pd.DataFrame(np.log((0.0001+obs_perClust)/(0.0001+exp_perClust)))
     enrichment_perClust[enrichment_perClust==-Inf]=0
     new_col_name = "Enrichment_"+suffix
     enrichment_perClust = enrichment_perClust.rename(columns={0:new_col_name})
@@ -193,12 +193,12 @@ def bar_infected_per_cluster(data, cluster_col, FDR_per_cluster, title, save_str
 
 # bar plot of viral+ cells per cluster - stacked by patient.
 def bar_infected_per_cluster_stacked(data, cluster_col, save_str=""):
-    grouped_clust = data.obs.groupby([data.obs[cluster_col], data.obs["patient"]])
+    grouped_clust = data.obs.groupby([data.obs[cluster_col], data.obs["donor"]])
     infClust = pd.DataFrame(grouped_clust["Viral+"].sum()).reset_index()
-    infClust.columns=["clusters","patient","Infected_cell_count"]
+    infClust.columns=["clusters","donor","Infected_cell_count"]
     infClust.loc[infClust["Infected_cell_count"].isna(), "Infected_cell_count"]=0
 
-    infClust_dense = infClust.pivot_table(index = "clusters", columns="patient", values="Infected_cell_count")
+    infClust_dense = infClust.pivot_table(index = "clusters", columns="donor", values="Infected_cell_count")
     plt.figure(figsize=(7, 15)) #Myeloid, for All->(15,15)
     infClust_dense.plot.bar(stacked=True)
     plt.grid(None)
@@ -213,26 +213,12 @@ def bar_infected_per_cluster_stacked(data, cluster_col, save_str=""):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
 ########################################
 # 1) Enrichment scores - general umap
 ########################################
 all_data = an.read_h5ad("LungData.h5ad") # Use the full file of data available in the single Cell Portal: https://singlecell.broadinstitute.org/single_cell/study/SCP1052/covid-19-lung-autopsy-samples
 
-
-
 # Focusing on the 7 patients with viral+ cells
-#all_data.obs[["Viral+","patient"]].value_counts()
 focus_patients = ["D3","D6","D7","D10","D11","D13","D16"]
 data = all_data[all_data.obs["donor"].isin(focus_patients),:].copy()
 
@@ -255,14 +241,16 @@ for p in focus_patients:
 ####################################
 # Myeloid
 #============
-Mac_cells = all_data[all_data.obs["Cluster"]=="Myeloid"]
-Mac_cells_focused = Mac_cells[Mac_cells.obs["donor"].isin(focus_patients),:].copy()
+Mac_cells =an.read_h5ad("Myeloid.h5ad") # The files for final subclustering are available in the Single Cell Portal at: https://singlecell.broadinstitute.org/single_cell/study/SCP1052/covid-19-lung-autopsy-samples
+Mac_cells_focused = Mac_cells[Mac_cells.obs["Patient_ID"].isin(focus_patients),:].copy()
+Mac_cells_focused.obs["donor"] = Mac_cells_focused.obs["Patient_ID"]
+Mac_cells_focused.obs.pop("Patient_ID")
 viral_enrichment_pipeline(data=Mac_cells_focused, cluster_col="ClusterName", title="Myeloid 7 patients", save_str="Myeloid_7patients", patient_specific=False,all_or_subclustering="subcluster")
 
 # Per patient
 # Re-read the data to avoid duplicate enrichment scores
 for p in focus_patients:
-    curr_data = Mac_cells[Mac_cells.obs["donor"]==p,:].copy()
+    curr_data = Mac_cells[Mac_cells.obs["Patient_ID"]==p,:].copy()
     viral_enrichment_pipeline(data=curr_data, cluster_col="ClusterName", title=p+" Myeloid", save_str=p+"myeloid", patient_specific=True, all_or_subclustering="subcluster")
 
 
@@ -271,8 +259,10 @@ for p in focus_patients:
 
 # Endothelial
 #============
-Endo_cells = all_data[all_data.obs["Cluster"]=="Endothelail"]
-Endo_cells_focused = Endo_cells[Endo_cells.obs["patient"].isin(focus_patients),:].copy()
+Endo_cells = an.read_h5ad("Endothelial.h5ad") # The files for final subclustering are available in the Single Cell Portal at: https://singlecell.broadinstitute.org/single_cell/study/SCP1052/covid-19-lung-autopsy-samples
+Endo_cells.obs["donor"] = Endo_cells.obs["Patient_ID"]
+Endo_cells.obs.pop("Patient_ID")
+Endo_cells_focused = Endo_cells[Endo_cells.obs["donor"].isin(focus_patients),:].copy()
 viral_enrichment_pipeline(data=Endo_cells_focused, cluster_col="ClusterName", title="Endothelial 7 patients", save_str="Endo_7patients", patient_specific=False, all_or_subclustering="subcluster")
 
 for p in focus_patients:
