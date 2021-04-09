@@ -7,10 +7,10 @@ import matplotlib.pyplot as plt
 figid2name = {
     # For WTA S vs C
     'Figure_4c_gsea': 'WTA PanCK+ alveolar',
-    'ED_Figure_8h_gsea': 'WTA PanCK- alveolar',
+    'ED_Figure_8i_gsea': 'WTA PanCK- alveolar',
     # For CTA S vs C
-    'ED_Figure_8i_gsea': 'CTA PanCK+ alveolar',
-    'ED_Figure_8j_gsea': 'CTA PanCK- alveolar',
+    'ED_Figure_8j_gsea': 'CTA PanCK+ alveolar',
+    'ED_Figure_8k_gsea': 'CTA PanCK- alveolar',
 }
 
 def translate_pathway(old_name):
@@ -46,6 +46,6 @@ def gen_gsea(filename):
 
 if __name__ == '__main__':
     gen_gsea("Figure_4/Figure_4c_gsea.H.csv")
-    gen_gsea("ED_Figure_8/ED_Figure_8h_gsea.H.csv")
     gen_gsea("ED_Figure_8/ED_Figure_8i_gsea.H.csv")
     gen_gsea("ED_Figure_8/ED_Figure_8j_gsea.H.csv")
+    gen_gsea("ED_Figure_8/ED_Figure_8k_gsea.H.csv")

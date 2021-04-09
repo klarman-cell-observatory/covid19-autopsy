@@ -1,1 +1,8 @@
 .ipynb_checkpoints/*
+Figure_4/*
+ED_Figure_8/*
+data/*
+
+!data/annotation_file_cta.txt
+!data/annotation_file_wta.txt
+!wta_cta.csv
