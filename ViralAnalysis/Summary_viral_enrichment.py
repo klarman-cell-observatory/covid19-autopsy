@@ -233,8 +233,8 @@ all_data = an.read_h5ad("LungData.h5ad") # Use the full file of data available i
 
 # Focusing on the 7 patients with viral+ cells
 #all_data.obs[["Viral+","patient"]].value_counts()
-focus_patients = ["P054921","P079042","P348762","P230638","P852049","P166169","P334354"]
-data = all_data[all_data.obs["patient"].isin(focus_patients),:].copy()
+focus_patients = ["D3","D6","D7","D10","D11","D13","D16"]
+data = all_data[all_data.obs["donor"].isin(focus_patients),:].copy()
 
 viral_enrichment_pipeline(data=data, cluster_col="Cluster", title="All", save_str="All_7patients", patient_specific=False, all_or_subclustering="all")
 
@@ -244,7 +244,7 @@ viral_enrichment_pipeline(data=data, cluster_col="Cluster", title="All", save_st
 # Re-read the data to avoid duplicate enrichment scores
 for p in focus_patients:
     print("***"+p+"+***")
-    curr_data = all_data[all_data.obs["patient"]==p,:].copy()
+    curr_data = all_data[all_data.obs["donor"]==p,:].copy()
     viral_enrichment_pipeline(data=curr_data, cluster_col="Cluster", title=p, save_str=p, patient_specific=True, all_or_subclustering="all")
 
 
@@ -256,13 +256,13 @@ for p in focus_patients:
 # Myeloid
 #============
 Mac_cells = all_data[all_data.obs["Cluster"]=="Myeloid"]
-Mac_cells_focused = Mac_cells[Mac_cells.obs["patient"].isin(focus_patients),:].copy()
+Mac_cells_focused = Mac_cells[Mac_cells.obs["donor"].isin(focus_patients),:].copy()
 viral_enrichment_pipeline(data=Mac_cells_focused, cluster_col="ClusterName", title="Myeloid 7 patients", save_str="Myeloid_7patients", patient_specific=False,all_or_subclustering="subcluster")
 
 # Per patient
 # Re-read the data to avoid duplicate enrichment scores
 for p in focus_patients:
-    curr_data = Mac_cells[Mac_cells.obs["patient"]==p,:].copy()
+    curr_data = Mac_cells[Mac_cells.obs["donor"]==p,:].copy()
     viral_enrichment_pipeline(data=curr_data, cluster_col="ClusterName", title=p+" Myeloid", save_str=p+"myeloid", patient_specific=True, all_or_subclustering="subcluster")
 
 
@@ -276,7 +276,7 @@ Endo_cells_focused = Endo_cells[Endo_cells.obs["patient"].isin(focus_patients),:
 viral_enrichment_pipeline(data=Endo_cells_focused, cluster_col="ClusterName", title="Endothelial 7 patients", save_str="Endo_7patients", patient_specific=False, all_or_subclustering="subcluster")
 
 for p in focus_patients:
-    curr_data = Endo_cells[Endo_cells.obs["patient"]==p,:].copy()
+    curr_data = Endo_cells[Endo_cells.obs["donor"]==p,:].copy()
     viral_enrichment_pipeline(data=curr_data, cluster_col="ClusterName", title=p+" Endothelial", save_str=p+"endothelial", patient_specific=True, all_or_subclustering="subcluster")
 
 
