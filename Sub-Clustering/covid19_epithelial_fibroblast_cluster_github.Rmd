@@ -1,0 +1,865 @@
+---
+title: "covid19_liger_cluster.Rmd"
+author: "Orr Ashenberg"
+date: "4/10/2021"
+output: html_document
+---
+
+Subclustering of lung COVID-19 samples using LIGER.
+
+# Load libraries, set paths, etc. 
+```{r}
+# Load libraries
+rm(list = ls())
+library(ggplot2)
+library(cowplot)
+theme_set(theme_cowplot())
+library(Seurat)
+library(dplyr)
+library(Matrix)
+library(gplots)
+library(GSA)
+library(stringr)
+library(patchwork)
+library(rliger)
+
+# Set directories 
+proj.path <- "/proj_path/"
+user.path <- "/user_path/"
+
+# Set date year_month_day to use in figure directory name and in names for saving Rda objects.
+date <- "2020_11_01"  
+
+# When doing batch correction, sample sizes can become very large. To save time, we can downsample cells
+# within each sample, to only sample a subset. Here we set the maximum number of cells to include 
+# in an identity class for each sample. This can be set to Inf to turn off downsampling.
+max.identity.size <- Inf
+
+# Read in the Seurat object generated in chunk below (converting AnnData to Seurat).
+# Specify cell subsets found in Cluster metadata column of gcdata.
+Rda.allcells.path <- paste0(proj.path, "/src/Rdata_orr/lung_annot_viral.Rda")
+cell.subsets <- list("fibroblast" = c("Fibroblasts"), "epithelial" = c("Epithelial"))  # Cluster metadata column in Seurat object
+
+# Number of factors to use in LIGER iNMF data integration.
+k.suggest <- 7
+
+# Select which DE test implemented in Seurat to use.
+tests <- c("wilcox", "t", "roc", "MAST", "bimod")
+test <- tests[1]
+
+# Read in a list of cell cycle markers, from Tirosh et al, 2015.
+# We can segregate this list into markers of G2/M phase and markers of S phase.
+cc.genes <- readLines(paste0(user.path, "/data/genelists/tirosh_regev_lab_cell_cycle_genes.txt"))
+s.genes <- cc.genes[1:43]
+g2m.genes <- cc.genes[44:97] 
+
+# Read in housekeeping genes from Tirosh et al, Science 2016.
+hkgenes <- read.table(paste0(user.path, "/data/genelists/tirosh_house_keeping.txt"), skip = 2)
+hkgenes <- as.vector(hkgenes$V1)
+
+# Read in list of gene sets associated with different cell types.
+file.PATS <- paste0(user.path, "/data/genelists/2020_PATS_lung_alveolar_epithelium.gmt")
+file.fibroblast <- paste0(user.path, "/data/genelists/Fibrosis_signatures.gmt")
+invisible(capture.output(gs.PATS <- GSA.read.gmt(file.PATS)))
+invisible(capture.output(gs.fibroblast <- GSA.read.gmt(file.fibroblast)))
+
+# Load my functions.
+source(paste0(user.path, "/code/R/plotutils.R"))
+source(paste0(user.path, "/code/R/seurat3utils.R"))
+source(paste0(user.path, "/code/R/color.R"))
+
+# knitr settings for code chunks.
+knitr::opts_knit$set(root.dir = proj.path)  # set working directory for all chunks
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+## LIGER data integration
+```{r batchcorrect_liger, eval = T}
+library(rliger)
+library(Seurat)
+# library(SeuratWrappers)
+
+for (cell.subset in names(cell.subsets)) {
+  # Make names for cell subset specific variables.
+  name.project <- cell.subset
+  print(name.project)
+
+  # Paths to Rdata objects to save.
+  Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+
+  # Prefix given to each figure.
+  figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+
+  # Create output directories.
+  figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+  out.dir <- c(figures.dir, paste0(proj.path, "/src/Rdata_orr/clusterscores_cellbender"), paste0(figures.dir, "UMAP_scores/"))
+  sapply(out.dir, function(i) {if (!dir.exists(i)) {dir.create(i, recursive = T)} })
+
+  # Save cluster annotation scores.
+  cluster.scores.prefix <- paste0(proj.path, "/src/Rdata_orr/clusterscores_cellbender/", date, "_", name.project, "_")
+
+  # Load Seurat object with integrated data, and then select subset of cells.
+  load(Rda.allcells.path)
+  Idents(gcdata.covid19) <- "Cluster"
+  gcdata <- subset(gcdata.covid19, idents = cell.subsets[[cell.subset]])
+  table(gcdata$Cluster)
+
+  # Split Seurat object by sampleid.
+  gcdata <- SplitObject(gcdata, split.by = "sample")
+  sampleid <- names(gcdata)
+
+  # Remove any samples with fewer than 40 cells.
+  keep <- sapply(gcdata, function(gc) ncol(gc) >= 40)
+  sampleid <- sampleid[keep]
+  gcdata <- gcdata[keep]
+
+  # Number of cells in each experimental condition.
+  sapply(gcdata, function(data) ncol(data))
+  
+  # Identify variable genes that are variable across most samples.
+  gcdata <- sapply(gcdata, function(data) NormalizeData(data, normalization.method = "LogNormalize", scale.factor = 10000))
+  var.genes <- SelectIntegrationFeatures(gcdata, nfeatures = 2000, verbose = TRUE, 
+                                         fvf.nfeatures = 2000, selection.method = "vst")
+  
+  # Each variable gene must be present in each dataset in the gcdata list.
+  names.list <- lapply(gcdata, function(data) rownames(data[['RNA']]@data))  
+  var.genes <- Reduce(intersect, c(list(var.genes), names.list))
+  
+  # Create liger object with raw counts (UMI) data from each batch, using cells that passed quality control.
+  data.liger <- createLiger(sapply(gcdata, function(data) data[['RNA']]@counts[, colnames(data)]), remove.missing = F) 
+  all.equal(colnames(gcdata[[1]][['RNA']]@data), colnames(gcdata[[1]][['RNA']]@counts[, colnames(gcdata[[1]])]))
+  
+  # Normalize gene expression for each batch.
+  data.liger <- rliger::normalize(data.liger)
+  
+  # Use my method or Liger method for selecting variable genes (var.thresh changes number of variable genes).
+  data.liger@var.genes <- var.genes
+  # data.liger <- selectGenes(data.liger, var.thresh = 0.1, do.plot = F)
+  
+  # Number of variable genes
+  print(length(var.genes))
+  
+  # Within each individual batch, scale the gene expression by its variance within the batch.
+  # Gene expression is not centered as NMF requires non-negative elements in the matrix to be factored.
+  # gene expression across all cells in the individual batch.
+  data.liger <- scaleNotCenter(data.liger)
+  
+  # Use the `suggestK` function to determine the appropriate number of factors to use.
+  # Use the `suggestLambda` function to find the smallest lambda for which the alignment metric stabilizes.
+  # k.suggest <- suggestK(data.liger, k.test = seq(5, 30, 5), num.cores = 4, gen.new = T, plot.log2 = T)
+  # print(k.suggest)
+  # lambda.suggest <- suggestLambda(gcdata.liger, k.suggest)
+  
+  # Use alternating least squares (ALS) to factorize the matrix.
+  # Next, do clustering of cells in shared nearest factor space.
+  # Build SNF graph, do quantile normalization, cluster quantile normalized data
+  # k.suggest <- 20  # with this line, we do not use the suggested k by suggestK()
+  lambda.suggest <- 5  # with this line, we do not use the suggested lambda by suggestLambda()
+  set.seed(100)  # optimizeALS below is stochastic
+  data.liger <- optimizeALS(data.liger, k = k.suggest, lamda = lambda.suggest) 
+  data.liger <- quantileAlignSNF(data.liger, resolution = 1.0)  # SNF clustering and quantile alignment
+  
+  # Visualize liger batch correction results.
+  data.liger <- runUMAP(data.liger, n_neighbors = 15, min_dist = 0.5)  # conda install -c conda-forge umap-learn
+  # p <- plotByDatasetAndCluster(data.liger, return.plots = T)  # list of two plots, dataset and clustering
+  # p[[2]]
+  # plotFeature(data.liger, "nUMI")
+  
+  # Make word clouds showing shared and specific genes for each factor, for a pair of datasets.
+  pdf(paste0(figures.dir, figures.prefix, "_word_clouds.pdf"))
+  plotWordClouds(data.liger, num.genes = 10, do.spec.plot = T, factor.share.thresh = 50)
+  dev.off()
+  word_clouds <- plotWordClouds(data.liger, num.genes = 10, factor.share.thresh = 50, do.spec.plot = F, return.plots = T)
+  print(word_clouds[[1]])
+  # plotGeneLoadings(data.liger, factor.share.thresh = 50)
+  
+  # Identify shared and batch-specific marker genes from liger factorization for a pair of datasets.
+  # Markers has two tables with genes specific to factors from each of the two batches, and a table with 
+  # genes shared by factors in the two batches.
+  markers <- getFactorMarkers(data.liger, num.genes = 10, factor.share.thresh = 50)
+  #plotGene(data.liger, gene = "Malat1")
+  #plotGeneViolin(data.liger, gene = "Malat1")
+  
+  # Scatter plot of how much each factor loads each cell across the datasets.
+  pdf(paste0(figures.dir, figures.prefix, "_plot_factors.pdf"))
+  plotFactors(data.liger)
+  dev.off()
+  
+  # Make Seurat object containing Liger data integration results.
+  gcdata <- merge(x = gcdata[[1]], y = gcdata[2:length(gcdata)], add.cell.ids = NULL, merge.data = FALSE)
+  gcdata <- NormalizeData(object = gcdata, normalization.method = "LogNormalize", scale.factor = 10000)
+  VariableFeatures(gcdata) <- var.genes
+  gcdata <- ScaleData(gcdata, split.by = "sample", features = VariableFeatures(gcdata), do.center = T, do.scale = F)  # within each individual batch, center the gene expression
+  
+  # Add liger cluster information and NMF dimensionality reduction to Seurat object.
+  clusters.liger <- data.frame("liger_clusters" = data.liger@clusters, 
+                               row.names = names(data.liger@clusters), stringsAsFactors = F)
+  gcdata <- AddMetaData(gcdata, metadata = clusters.liger)  
+  Idents(gcdata) <- "liger_clusters"
+  dr <- CreateDimReducObject(embeddings = data.liger@H.norm, loadings = t(data.liger@W), key = "iNMF_", assay = "RNA")
+  gcdata[["iNMF"]] <- dr
+  
+  # Dimensionality reduction for data visualization.
+  gcdata <- RunUMAP(gcdata, dims = 1:ncol(gcdata[['iNMF']]), reduction = "iNMF", n.neighbors = 15, min.dist = 0.5, spread = 1, metric = "euclidean", seed.use = 1)  
+  
+  # Find differentially expressed genes for each cluster. 
+  gcdata.markers <- FindAllMarkers(gcdata, min.pct = 0.1, logfc.threshold = 0.5, max.cells.per.ident = 1500, test.use = test, return.thresh = 0.1 / nrow(gcdata), verbose = T)
+  top10genes <- gcdata.markers %>% filter(avg_log2FC > 0) %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+  top100genes <- gcdata.markers %>% group_by(cluster) %>% top_n(100, avg_log2FC)
+  
+  # Find differentially expressed genes that are only differentially expressed in one cluster.
+  gcdata.markers.unique <- gcdata.markers %>% dplyr::filter(avg_log2FC > 0.5) %>% group_by(gene) %>% dplyr::summarise(n = n()) %>% dplyr::filter(n == 1)
+  gcdata.markers.unique <- gcdata.markers[gcdata.markers.unique$gene, ]
+  top10genes.unique <- gcdata.markers.unique %>% dplyr::group_by(cluster) %>% arrange(-avg_log2FC) %>% do(head(., n=10))
+  
+  # Write cluster markers to csv file.
+  write.csv(top100genes, file=paste0(figures.dir, figures.prefix, "_top_DE_genes.csv"))
+  write.csv(top10genes.unique, file=paste0(figures.dir, figures.prefix, "_unique_DE_genes.csv"))
+  
+  # Save current progress, with the number of factors used in NMF in the filename.
+  save(gcdata, data.liger, sampleid, gcdata.markers, file = Rda.batchcorrect.liger.path)
+  
+  # Dimensionality reduction plot colored by cluster identity or by sample.
+  p1 <- DimPlot(gcdata, reduction = "umap", group.by = "liger_clusters", cols = material.heat(n_distinct(gcdata$liger_clusters)), label = T)
+  p2 <- DimPlot(gcdata, reduction = "umap", group.by = "sample", cols = material.heat(n_distinct(gcdata$sample)))
+  p1 + p2
+  ggsave(paste0(figures.dir, figures.prefix, "_UMAP_cluster_sample.png"), width = 20, height = 10)
+
+  # Dimensionality reduction plot for each sample.
+  DimPlot(gcdata, reduction = "umap", split.by = "sample", cols = material.heat(n_distinct(gcdata$liger_clusters)), ncol = 4, label = T)
+  ggsave(paste0(figures.dir, figures.prefix, "_UMAP_individual_sample.png"), width = 14, height = 14)
+  
+  # Dimensionality reduction plot colored by number of detected genes.
+  FeaturePlot(gcdata, "nFeature_RNA", reduction = "umap", pt.size = 1) + scale_colour_gradientn(colours = material.heat(7), limits = quantile(gcdata$nFeature_RNA, c(.05, .95)))
+  ggsave(paste0(figures.dir, figures.prefix, "_UMAP_nGene.png"), width = 6, height = 6)
+
+  gcdata <- CellCycleScoring(gcdata, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+  DimPlot(gcdata, reduction = "umap", pt.size = 1, cols = material.heat(3))
+  ggsave(paste0(figures.dir, figures.prefix, "_UMAP_cycle.png"), width = 6, height = 6)
+
+  # Heatmap of clusters showing cells and top marker genes.
+  Idents(gcdata) <- "liger_clusters"
+  gcdata <- ScaleData(gcdata, features = c(top10genes$gene, top10genes.unique$gene), do.center = T, do.scale = F)
+  DoHeatmap(gcdata, features = top10genes$gene) + scale_fill_distiller(palette = "RdYlBu")
+  ggsave(paste0(figures.dir, figures.prefix, "_DE_genes_expression.png"), width = 18, height = 18)
+  DoHeatmap(gcdata, features = top10genes.unique$gene) + scale_fill_distiller(palette = "RdYlBu")
+  ggsave(paste0(figures.dir, figures.prefix, "_unique_DE_genes_expression.png"), width = 18, height = 18)
+}
+```
+
+## Look at factor loadings in LIGER analysis
+Only the variable genes have loadings for the factors in the LIGER analysis,
+```{r liger_factor_analysis, eval = T}
+# Heatmap functions needed to save pheatmap and also to make grids of pheatmap plots
+library(pheatmap)
+library(gridExtra)
+library(grid)
+save_pheatmap_pdf <- function(x, filename, width=7, height=7) {
+  stopifnot(!missing(x))
+  stopifnot(!missing(filename))
+  pdf(filename, width=width, height=height)
+  grid::grid.newpage()
+  grid::grid.draw(x$gtable)
+  dev.off()
+}
+
+for (cell.subset in names(cell.subsets)) {
+  # Make names for cell subset specific variables.
+  name.project <- cell.subset
+  print(name.project)
+
+  # Paths to Rdata objects to load.
+  Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+  load(Rda.batchcorrect.liger.path)
+  
+  # Prefix given to each figure.
+  figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+  figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+
+  # Collect genes with greatest weights from shared factor matrix W and store in dataframe.
+  # Take top ngenes for each factor, and also store the cutoff weight that all ngenes are above
+  W <- gcdata[['iNMF']]@feature.loadings
+  ngenes <- 100  # number of top genes to keep for each LIGER shared factor
+  topgenes.allsamples <- data.frame(matrix(, nrow = ngenes, ncol = 0))
+  cutoff.weights <- vector()  # sort genes by weight in each factor, return weight for the cutoff that all ngenes are above
+  for (k in colnames(W)) {  # iterate over factors
+    topgenes <- rownames(W[order(-W[, k])[1:ngenes], ])
+    topgenes.allsamples[[k]] <- topgenes
+    cutoff.weights <- c(cutoff.weights, W[topgenes[ngenes], k])
+    print(k)
+    print(W[order(-W[, k])[1:10], ])
+    print(topgenes)
+  }
+  # Write gene expression programs to file.
+  write.table(topgenes.allsamples, file = paste0(figures.dir, figures.prefix,  "_sharedfactors_topgenes.csv"), row.names = F, quote = F, sep = ",")
+  
+  # Kullback–Leibler divergence of the Poisson distribution with parameter θkg to the Poisson distribution with parameter θlg https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1006599#sec010
+  
+  # For each factor, make a histogram showing weights for each gene.
+  df1 <- gather(as.data.frame(W), key = "iNMF", value = "gene_weight")
+  df2 <- data.frame("cutoff" = cutoff.weights, "iNMF" = colnames(W))
+  df1$iNMF <- factor(df1$iNMF, levels = colnames(W))
+  df2$iNMF <- factor(df2$iNMF, levels = colnames(W))
+  ggplot(df1, mapping = aes(x = gene_weight)) + geom_histogram(binwidth = 1) + geom_vline(df2, mapping = aes(xintercept = cutoff), linetype="dotted", color = "blue", size=1.5) + facet_wrap(~iNMF, scales = 'free_x')
+  ggsave(paste0(figures.dir, figures.prefix, "_histogram_factor_scores.png"), width = 14, height = 10)
+  
+  # Score cells with each of the programs, defined by the set of genes with greatest weights 
+  # in each shared factor.
+  ngenes.scoring <- 100  # number of top genes from each factor for scoring cells,  < ngenes
+  for (k in colnames(topgenes.allsamples)) {
+    gcdata <- AddModuleScore(gcdata, list(topgenes.allsamples[1:ngenes.scoring, k]), ctrl = 10, name = k)
+    gcdata[[k]] <- gcdata[[paste0(k, "1")]]
+    gcdata[[paste0(k, "1")]] <- NULL
+  }
+  MultipleFeaturePlot(gcdata, colnames(topgenes.allsamples), feature.type = "meta", ncols = 5)
+  ggsave(paste0(figures.dir, figures.prefix, "_iNMF_scores.png"), width = 20, height = 20)
+  
+  # Hierarchical clustering of cells and programs based on the cell scores for each factor program.
+  m <- gcdata[[colnames(topgenes.allsamples)]]
+  if (nrow(m) > 35000) {  # subsample matrix rows if there are very many cells
+    set.seed(123)
+    cells.subsample <- sample(rownames(m), 35000, replace = F)
+    m <- m[cells.subsample, ]
+  }
+  p <- pheatmap(t(as.matrix(m)), show_colnames = F, treeheight_col = 0, clustering_distance_rows = "correlation", clustering_method = "complete", cutree_rows = 7)
+  save_pheatmap_pdf(p, paste0(figures.dir, figures.prefix,  "_cell_score_heatmap.pdf"), width = 8, height = 8)
+
+  # Cut the dendrogram to assign similar shared factors to clusters.
+  # cluster.labels <- sort(cutree(p$tree_row, k = 9))
+  cluster.factors <- p$tree_row$labels[p$tree_row$order]
+  MultipleFeaturePlot(gcdata, cluster.factors, feature.type = "meta", ncols = 5)
+  ggsave(paste0(figures.dir, figures.prefix, "_iNMF_scores_sorted.png"), width = 20, height = 20)
+  
+  # Write gene expression programs to file.
+  write.table(topgenes.allsamples[cluster.factors], file = paste0(figures.dir, figures.prefix,  "_sharedfactors_topgenes.csv"), row.names = F, quote = F, sep = ",")
+
+  # Save current progress, with the number of factors used in NMF in the filename.
+  save(gcdata, data.liger, sampleid, gcdata.markers, topgenes.allsamples, file = Rda.batchcorrect.liger.path)
+  
+  # Plot mean expression of LIGER factor genes as a heatmap. 
+  # topgenes.allsamples <- topgenes.allsamples[c("iNMF_3", "iNMF_7", "iNMF_1", "iNMF_4", "iNMF_2", "iNMF_5", "iNMF_6")]  # reorder fibroblast LIGER factors in desired order
+  topgenes.allsamples <- topgenes.allsamples[c("iNMF_1", "iNMF_4", "iNMF_8", "iNMF_7", "iNMF_3", "iNMF_2", "iNMF_5", "iNMF_6")]  # reorder epithelial LIGER factors in desired order
+
+  genes <- unlist(topgenes.allsamples[1:20,])  # top genes from each factor
+  gcdata.plot <- AverageExpression(gcdata, features = genes, return.seurat = T, assays = "RNA")
+  DoHeatmap(gcdata.plot, features = genes, slot = "scale.data", assay = "RNA", draw.lines = F) + scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) + theme(strip.background = element_blank(), panel.spacing = unit(x = 0.5, units = 'lines'))
+  ggsave(paste0(figures.dir, figures.prefix, "_iNMF_genes_expression.png"), width = 12, height = 30)
+  ggsave(paste0(figures.dir, figures.prefix, "_iNMF_genes_expression.pdf"), width = 12, height = 30)
+}
+```
+
+## Plot gene signatures on COVID-19 lung
+```{r plot_signature, eval = T}
+colors <- c("#191970","#121285","#0C0C9A","#0707B0","#0101C5","#0014CF","#0033D3","#0053D8","#0072DD","#0092E1","#00B2E6", "#00D1EB","#23E8CD","#7AF17B","#D2FA29","#FFEB00","#FFC300","#FF9B00","#FF8400","#FF7800","#FF6B00","#FF5F00","#FF5300", "#FF4700","#F73B00","#EF2E00","#E62300","#DD1700","#D50B00","#CD0000")
+
+# Make names for cell subset specific variables.
+name.project <- "fibroblast"
+print(name.project)
+
+# Paths to Rdata objects to load.
+Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+load(Rda.batchcorrect.liger.path)
+
+# Prefix given to each figure.
+figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+
+# Dimensionality reduction plot colored by gene signatures, 
+gcdata <- AddModuleScore(gcdata, gs.fibroblast$genesets, ctrl = 10, name = c("Acute_Interstitial_Pneumonia", "Cystic_Fibrosis", "Pulmonary_Fibrosis", "Inflammation", "Initiation", "Modification", "Proliferation"))
+gcdata[["Acute_Interstitial_Pneumonia"]] <- gcdata$Acute_Interstitial_Pneumonia1
+gcdata[["Cystic_Fibrosis"]] <- gcdata$Cystic_Fibrosis2
+gcdata[["Pulmonary_Fibrosis"]] <- gcdata$Pulmonary_Fibrosis3
+gcdata[["Inflammation"]] <- gcdata$Inflammation4
+gcdata[["Initiation"]] <- gcdata$Initiation5
+gcdata[["Modification"]] <- gcdata$Modification6
+gcdata[["Proliferation"]] <- gcdata$Proliferation7
+gcdata$Acute_Interstitial_Pneumonia1 <- NULL
+gcdata$Cystic_Fibrosis2 <- NULL
+gcdata$Pulmonary_Fibrosis3 <- NULL
+gcdata$Inflammation4 <- NULL
+gcdata$Initiation5 <- NULL
+gcdata$Modification6 <- NULL
+gcdata$Proliferation7 <- NULL
+MultipleFeaturePlot(gcdata, c("Acute_Interstitial_Pneumonia", "Cystic_Fibrosis", "Pulmonary_Fibrosis"), feature.type = "meta")
+MultipleFeaturePlot(gcdata, c("Inflammation", "Initiation", "Modification", "Proliferation"), feature.type = "meta")
+
+# Make names for cell subset specific variables.
+name.project <- "epithelial"
+print(name.project)
+
+# Paths to Rdata objects to load.
+Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+load(Rda.batchcorrect.liger.path)
+
+# Prefix given to each figure.
+figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+
+gcdata <- AddModuleScore(gcdata, gs.PATS$genesets, ctrl = 10, name = c("AEC1", "AEC2", "PATSlike", "PATS"))
+gcdata[["AEC1"]] <- gcdata$AEC11
+gcdata[["AEC2"]] <- gcdata$AEC22
+gcdata[["PATSlike"]] <- gcdata$PATSlike3
+gcdata[["PATS"]] <- gcdata$PATS4
+gcdata$AEC11 <- NULL
+gcdata$AEC22 <- NULL
+gcdata$PATSlike3 <- NULL
+gcdata$PATS4 <- NULL
+MultipleFeaturePlot(gcdata, c("AEC1", "AEC2", "PATSlike", "PATS"), feature.type = "meta")
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_PATS.png"), width = 12, height = 12)
+FeaturePlot(gcdata, c("AEC1", "AEC2", "PATSlike", "PATS"), reduction = "umap", pt.size = 1) + scale_color_gradientn(colors=colors)
+```
+
+## Label cell types with annotation
+Label cell subsets based on scoring gene modules above.
+```{r cluster_annotate, eval = T}
+
+PlotAnnotation <- function(gcdata, figures.dir, title, current.cluster.ids, new.cluster.ids) {
+  file1.plot <- paste0(figures.dir, "UMAP_annotate_coarse.png")
+  Idents(gcdata) <- plyr::mapvalues(Idents(gcdata), from = current.cluster.ids, to = new.cluster.ids)
+  gcdata[["annotate_coarse"]] <- Idents(object = gcdata)
+  Idents(gcdata) <- "annotate_coarse"
+
+  p1 <- DimPlot(gcdata, reduction = "umap", group.by = "annotate_coarse", 
+                cols = material.heat(n_distinct(gcdata$annotate_coarse)), label = T) +
+    ggtitle(title)
+  p2 <- DimPlot(gcdata, reduction = "umap", group.by = "liger_clusters", 
+                cols = material.heat(n_distinct(gcdata$liger_clusters)), label = T)
+  p1 + p2
+  ggsave(file1.plot, width = 14, height = 6)
+
+  gcdata
+}
+
+# Make names for cell subset specific variables.
+name.project <- "epithelial"
+print(name.project)
+
+# Paths to Rdata objects to load.
+k.suggest <- 8
+Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+load(Rda.batchcorrect.liger.path)
+
+# Prefix given to each figure.
+figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+
+# Identify cell types based on marker genes and annotate clusters by their cell type.
+Idents(gcdata) <- "liger_clusters"
+current.cluster.ids <- 1:max(as.integer(Idents(gcdata)))
+new.cluster.ids <- c("AT2 (1)", "Doublets-Endothelial", "Secretory (basal/club/goblet)", "AT2 (2)", "Doublets-Macrophage", "Doublets-Fibroblast", "KRT8+ PATS/ADI/DATPs", "AT1")
+gcdata <- PlotAnnotation(gcdata, paste0(figures.dir, figures.prefix), figures.prefix, current.cluster.ids, new.cluster.ids)
+gcdata$annotate_coarse <- factor(gcdata$annotate_coarse, levels = c(new.cluster.ids[1], new.cluster.ids[4], new.cluster.ids[8], new.cluster.ids[7], new.cluster.ids[3], new.cluster.ids[2], new.cluster.ids[5], new.cluster.ids[6]))
+Idents(gcdata) <- "annotate_coarse"
+# Write data files for paper for fibroblast subclustering.
+df.umap <- as.data.frame(gcdata[["umap"]]@cell.embeddings)
+df.umap[["liger_clusters"]] <- gcdata$liger_clusters
+ggplot(df.umap) + geom_point(mapping = aes(x = UMAP_1, y = UMAP_2, color = liger_clusters))
+write.csv(df.umap, file = paste0(figures.dir, figures.prefix, "_umap_coords_liger_clusters.csv"))
+
+# Write annotation to metadata file.
+df.metadata <- gcdata[[c("predictions", "Cluster", "annotate_coarse")]]
+write.table(df.metadata, file = paste0(figures.dir, figures.prefix, "_metadata_annotation.tsv"), sep = "\t", quote = F)
+
+# Visualization or LIGER + annotate + PATS.
+p1 <- DimPlot(gcdata, reduction = "umap", group.by = "annotate_coarse", cols = material.heat(n_distinct(gcdata$annotate_coarse)), label = T) + ggtitle("annotation")
+p2 <- DimPlot(gcdata, reduction = "umap", group.by = "predictions", cols = material.heat(n_distinct(gcdata$predictions)), label = T) + ggtitle("prediction")
+p1 + p2
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_annotate_prediction.png"), width = 20, height = 10)
+p1 <- DimPlot(gcdata, reduction = "umap", group.by = "liger_clusters", cols = material.heat(n_distinct(gcdata$liger_clusters)), label = T) + ggtitle("liger_clusters")
+p2 <- DimPlot(gcdata, reduction = "umap", group.by = "annotate_coarse", cols = material.heat(n_distinct(gcdata$annotate_coarse)), label = T) + ggtitle("annotation")
+p3 <- MultipleFeaturePlot(gcdata, c("PATS"), feature.type = "meta", pt.size = 0.5)
+p1 + p2 + p3 + plot_layout(ncol = 3)
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_liger_annotate_PATS.png"), width = 18, height = 6)
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_liger_annotate_PATS.pdf"), width = 18, height = 6)
+
+# Make names for cell subset specific variables.
+name.project <- "fibroblast"
+print(name.project)
+
+# Paths to Rdata objects to load.
+k.suggest <- 7
+Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+load(Rda.batchcorrect.liger.path)
+
+# Prefix given to each figure.
+figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+
+# Identify cell types based on marker genes and annotate clusters by their cell type.
+Idents(gcdata) <- "liger_clusters"
+current.cluster.ids <- 1:max(as.integer(Idents(gcdata)))
+new.cluster.ids <- c("Myofibroblast", "Doublets-Endothelial", "Fibroblast (1)", "Proliferative fibroblast", "Doublets-Macrophage", "Doublets-AT2", "Fibroblast (2)")
+gcdata <- PlotAnnotation(gcdata, paste0(figures.dir, figures.prefix), figures.prefix, current.cluster.ids, new.cluster.ids)
+gcdata$annotate_coarse <- factor(gcdata$annotate_coarse, levels = c(new.cluster.ids[3], new.cluster.ids[7], new.cluster.ids[1], new.cluster.ids[4], new.cluster.ids[2], new.cluster.ids[5], new.cluster.ids[6]))
+Idents(gcdata) <- "annotate_coarse"
+# Write annotation to metadata file.
+df.metadata <- gcdata[[c("predictions", "Cluster", "annotate_coarse")]]
+write.table(df.metadata, file = paste0(figures.dir, figures.prefix, "_metadata_annotation.tsv"), sep = "\t", quote = F)
+# Write data files for paper for fibroblast subclustering.
+df.umap <- as.data.frame(gcdata[["umap"]]@cell.embeddings)
+df.umap[["liger_clusters"]] <- gcdata$liger_clusters
+ggplot(df.umap) + geom_point(mapping = aes(x = UMAP_1, y = UMAP_2, color = liger_clusters))
+write.csv(df.umap, file = paste0(figures.dir, figures.prefix, "_umap_coords_liger_clusters.csv"))
+
+# Visualization or LIGER + annotate + myofibroblast
+p1 <- DimPlot(gcdata, reduction = "umap", group.by = "liger_clusters", cols = material.heat(n_distinct(gcdata$liger_clusters)), label = T) + ggtitle("liger_clusters")
+p2 <- DimPlot(gcdata, reduction = "umap", group.by = "annotate_coarse", cols = material.heat(n_distinct(gcdata$annotate_coarse)), label = T) + ggtitle("annotation")
+p3 <- MultipleFeaturePlot(gcdata, c("myofibroblast"), feature.type = "meta", pt.size = 0.5)
+p1 + p2 + p3 + plot_layout(ncol = 3)
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_liger_annotate_Krasnow_myofibroblast.png"), width = 18, height = 6)
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_liger_annotate_Krasnow_myofibroblast.pdf"), width = 18, height = 6)
+```
+
+## Subclustering cluster 7 and cluster 3 (PATS cells and airway cells)
+```{r subcluster_cluster3_cluster7, eval = T}
+# First load object with subclustering for epithelial cells.
+# Make names for cell subset specific variables.
+name.project <- "epithelial"
+print(name.project)
+
+# Paths to Rdata objects to load.
+k.suggest <- 8
+Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+load(Rda.batchcorrect.liger.path)
+
+# Next, begin to subcluster by pulling out only the cluster of interest
+# Subset Seurat object to cluster 3.
+Idents(gcdata) <- "liger_clusters"
+gcdata <- subset(gcdata, idents = 7)  # subset(gcdata, idents = 3)
+
+# Now run subclustering on cluster 3 or cluster 7 of the epithelial cells.
+# Make names for cell subset specific variables.
+k.suggest <- 4
+name.project <- "epithelial_cluster7"  # epithelial_cluster3
+print(name.project)
+
+# Paths to Rdata objects to save.
+Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+
+# Prefix given to each figure.
+figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+
+# Create output directories.
+figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+out.dir <- c(figures.dir, paste0(proj.path, "/src/Rdata_orr/clusterscores_cellbender"), paste0(figures.dir, "UMAP_scores/"))
+sapply(out.dir, function(i) {if (!dir.exists(i)) {dir.create(i, recursive = T)} })
+
+# Save cluster annotation scores.
+cluster.scores.prefix <- paste0(proj.path, "/src/Rdata_orr/clusterscores_cellbender/", date, "_", name.project, "_")
+
+# Split Seurat object by sampleid.
+gcdata <- SplitObject(gcdata, split.by = "sample")
+sampleid <- names(gcdata)
+
+# Remove any samples with fewer than 40 cells.
+keep <- sapply(gcdata, function(gc) ncol(gc) >= 20)
+sampleid <- sampleid[keep]
+gcdata <- gcdata[keep]
+
+# Number of cells in each experimental condition.
+sapply(gcdata, function(data) ncol(data))
+
+# Identify variable genes that are variable across most samples.
+gcdata <- sapply(gcdata, function(data) NormalizeData(data, normalization.method = "LogNormalize", scale.factor = 10000))
+var.genes <- SelectIntegrationFeatures(gcdata, nfeatures = 2000, verbose = TRUE, 
+                                       fvf.nfeatures = 2000, selection.method = "vst")
+
+# Each variable gene must be present in each dataset in the gcdata list.
+names.list <- lapply(gcdata, function(data) rownames(data[['RNA']]@data))  
+var.genes <- Reduce(intersect, c(list(var.genes), names.list))
+
+# Create liger object with raw counts (UMI) data from each batch, using cells that passed quality control.
+data.liger <- createLiger(sapply(gcdata, function(data) data[['RNA']]@counts[, colnames(data)]), remove.missing = F) 
+all.equal(colnames(gcdata[[1]][['RNA']]@data), colnames(gcdata[[1]][['RNA']]@counts[, colnames(gcdata[[1]])]))
+
+# Normalize gene expression for each batch.
+data.liger <- rliger::normalize(data.liger)
+
+# Use my method or Liger method for selecting variable genes (var.thresh changes number of variable genes).
+data.liger@var.genes <- var.genes
+# data.liger <- selectGenes(data.liger, var.thresh = 0.1, do.plot = F)
+
+# Number of variable genes
+print(length(var.genes))
+
+# Within each individual batch, scale the gene expression by its variance within the batch.
+# Gene expression is not centered as NMF requires non-negative elements in the matrix to be factored.
+# gene expression across all cells in the individual batch.
+data.liger <- scaleNotCenter(data.liger)
+
+# Use the `suggestK` function to determine the appropriate number of factors to use.
+# Use the `suggestLambda` function to find the smallest lambda for which the alignment metric stabilizes.
+# k.suggest <- suggestK(data.liger, k.test = seq(5, 30, 5), num.cores = 4, gen.new = T, plot.log2 = T)
+# print(k.suggest)
+# lambda.suggest <- suggestLambda(gcdata.liger, k.suggest)
+
+# Use alternating least squares (ALS) to factorize the matrix.
+# Next, do clustering of cells in shared nearest factor space.
+# Build SNF graph, do quantile normalization, cluster quantile normalized data
+# k.suggest <- 20  # with this line, we do not use the suggested k by suggestK()
+lambda.suggest <- 5  # with this line, we do not use the suggested lambda by suggestLambda()
+set.seed(100)  # optimizeALS below is stochastic
+data.liger <- optimizeALS(data.liger, k = k.suggest, lamda = lambda.suggest) 
+data.liger <- quantileAlignSNF(data.liger, resolution = 1.0, knn_k = 10)  # SNF clustering and quantile alignment
+
+# Visualize liger batch correction results.
+data.liger <- runUMAP(data.liger, n_neighbors = 15, min_dist = 0.5)  # conda install -c conda-forge umap-learn
+# p <- plotByDatasetAndCluster(data.liger, return.plots = T)  # list of two plots, dataset and clustering
+# p[[2]]
+# plotFeature(data.liger, "nUMI")
+
+# Make word clouds showing shared and specific genes for each factor, for a pair of datasets.
+pdf(paste0(figures.dir, figures.prefix, "_word_clouds.pdf"))
+plotWordClouds(data.liger, num.genes = 10, do.spec.plot = T, factor.share.thresh = 50)
+dev.off()
+word_clouds <- plotWordClouds(data.liger, num.genes = 10, factor.share.thresh = 50, do.spec.plot = F, return.plots = T)
+print(word_clouds[[1]])
+# plotGeneLoadings(data.liger, factor.share.thresh = 50)
+
+# Identify shared and batch-specific marker genes from liger factorization for a pair of datasets.
+# Markers has two tables with genes specific to factors from each of the two batches, and a table with 
+# genes shared by factors in the two batches.
+markers <- getFactorMarkers(data.liger, num.genes = 10, factor.share.thresh = 50)
+#plotGene(data.liger, gene = "Malat1")
+#plotGeneViolin(data.liger, gene = "Malat1")
+
+# Scatter plot of how much each factor loads each cell across the datasets.
+pdf(paste0(figures.dir, figures.prefix, "_plot_factors.pdf"))
+plotFactors(data.liger)
+dev.off()
+
+# Make Seurat object containing Liger data integration results.
+gcdata <- merge(x = gcdata[[1]], y = gcdata[2:length(gcdata)], add.cell.ids = NULL, merge.data = FALSE)
+gcdata <- NormalizeData(object = gcdata, normalization.method = "LogNormalize", scale.factor = 10000)
+VariableFeatures(gcdata) <- var.genes
+gcdata <- ScaleData(gcdata, split.by = "sample", features = VariableFeatures(gcdata), do.center = T, do.scale = F)  # within each individual batch, center the gene expression
+
+# Add liger cluster information and NMF dimensionality reduction to Seurat object.
+clusters.liger <- data.frame("liger_clusters" = data.liger@clusters, 
+                             row.names = names(data.liger@clusters), stringsAsFactors = F)
+gcdata <- AddMetaData(gcdata, metadata = clusters.liger)  
+Idents(gcdata) <- "liger_clusters"
+dr <- CreateDimReducObject(embeddings = data.liger@H.norm, loadings = t(data.liger@W), key = "iNMF_", assay = "RNA")
+gcdata[["iNMF"]] <- dr
+
+# Dimensionality reduction for data visualization.
+gcdata <- RunUMAP(gcdata, dims = 1:ncol(gcdata[['iNMF']]), reduction = "iNMF", n.neighbors = 15, min.dist = 0.5, spread = 1, metric = "euclidean", seed.use = 1)  
+
+# Find differentially expressed genes for each cluster. 
+gcdata.markers <- FindAllMarkers(gcdata, min.pct = 0.1, logfc.threshold = 0.5, max.cells.per.ident = 1500, test.use = test, return.thresh = 0.1 / nrow(gcdata), verbose = T)
+top10genes <- gcdata.markers %>% filter(avg_log2FC > 0) %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+top100genes <- gcdata.markers %>% group_by(cluster) %>% top_n(100, avg_log2FC)
+
+# Find differentially expressed genes that are only differentially expressed in one cluster.
+gcdata.markers.unique <- gcdata.markers %>% dplyr::filter(avg_log2FC > 0.5) %>% group_by(gene) %>% dplyr::summarise(n = n()) %>% dplyr::filter(n == 1)
+gcdata.markers.unique <- gcdata.markers[gcdata.markers.unique$gene, ]
+top10genes.unique <- gcdata.markers.unique %>% dplyr::group_by(cluster) %>% arrange(-avg_log2FC) %>% do(head(., n=10))
+
+# Write cluster markers to csv file.
+write.csv(top100genes, file=paste0(figures.dir, figures.prefix, "_top_DE_genes.csv"))
+write.csv(top10genes.unique, file=paste0(figures.dir, figures.prefix, "_unique_DE_genes.csv"))
+
+# Save current progress, with the number of factors used in NMF in the filename.
+save(gcdata, data.liger, sampleid, gcdata.markers, file = Rda.batchcorrect.liger.path)
+
+# Dimensionality reduction plot colored by cluster identity or by sample.
+p1 <- DimPlot(gcdata, reduction = "umap", group.by = "liger_clusters", cols = material.heat(n_distinct(gcdata$liger_clusters)), label = T)
+p2 <- DimPlot(gcdata, reduction = "umap", group.by = "sample", cols = material.heat(n_distinct(gcdata$sample)))
+p1 + p2
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_cluster_sample.png"), width = 20, height = 10)
+
+# Dimensionality reduction plot for each sample.
+DimPlot(gcdata, reduction = "umap", split.by = "sample", cols = material.heat(n_distinct(gcdata$liger_clusters)), ncol = 4, label = T)
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_individual_sample.png"), width = 14, height = 14)
+
+# Dimensionality reduction plot colored by number of detected genes.
+FeaturePlot(gcdata, "nFeature_RNA", reduction = "umap", pt.size = 1) + scale_colour_gradientn(colours = material.heat(7), limits = quantile(gcdata$nFeature_RNA, c(.05, .95)))
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_nGene.png"), width = 6, height = 6)
+
+gcdata <- CellCycleScoring(gcdata, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+DimPlot(gcdata, reduction = "umap", pt.size = 1, cols = material.heat(3))
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_cycle.png"), width = 6, height = 6)
+
+# Heatmap of clusters showing cells and top marker genes.
+Idents(gcdata) <- "liger_clusters"
+gcdata <- ScaleData(gcdata, features = c(top10genes$gene, top10genes.unique$gene), do.center = T, do.scale = F)
+DoHeatmap(gcdata, features = top10genes$gene) + scale_fill_distiller(palette = "RdYlBu")
+ggsave(paste0(figures.dir, figures.prefix, "_DE_genes_expression.png"), width = 18, height = 18)
+DoHeatmap(gcdata, features = top10genes.unique$gene) + scale_fill_distiller(palette = "RdYlBu")
+ggsave(paste0(figures.dir, figures.prefix, "_unique_DE_genes_expression.png"), width = 18, height = 18)
+
+ # Look at KRT5 high cells within PATS epithelial cluster and find markers in those cells.
+FeaturePlot(gcdata, c("KRT8", "SOX2", "KRT5", "TP63", "SCGB1A1", "SCGB3A2"))
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_basal_markers.png"), width = 12, height = 12)
+
+FeaturePlot(gcdata, c("MUC5B", "TMEM45A", "SCGB1A1", "SCGB3A2"))
+DimPlot(gcdata.sub, reduction = "umap", label = T, group.by = "predictions")
+
+# Save metadata for cluster 3.
+df.metadata.cluster3 <- gcdata[[]]
+write.csv(df.metadata.cluster3, file=paste0(figures.dir, figures.prefix, "_metadata_cluster3.csv"))
+
+# Save metadata for cluster 7.
+df.metadata.cluster7 <- gcdata[[]]
+write.csv(df.metadata.cluster7, file=paste0(figures.dir, figures.prefix, "_metadata_cluster7.csv"))
+```
+
+## Plots from subclustering of cluster 7 and cluster 3 (PATS cells and airway cells)
+```{r cluster7_cluster3_plots, eval = T}
+colors <- c("#191970","#121285","#0C0C9A","#0707B0","#0101C5","#0014CF","#0033D3","#0053D8","#0072DD","#0092E1","#00B2E6", "#00D1EB","#23E8CD","#7AF17B","#D2FA29","#FFEB00","#FFC300","#FF9B00","#FF8400","#FF7800","#FF6B00","#FF5F00","#FF5300", "#FF4700","#F73B00","#EF2E00","#E62300","#DD1700","#D50B00","#CD0000")
+
+load(Rda.allcells.path)
+
+# Load subclustering of cluster 7
+k.suggest <- 4
+name.project <- "epithelial_cluster7" 
+Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+load(Rda.batchcorrect.liger.path)
+gcdata[["figure"]] <- gcdata$liger_clusters == 4
+p1 <- DimPlot(gcdata, reduction = "umap", label = F, group.by = "figure", cols = c("grey", "blue")) + NoLegend() + ggtitle("Subclustering KRT8/PATS")
+gcdata[["figure"]] <- gcdata$liger_clusters == 4
+p2 <- FeaturePlot(gcdata, c("TP63", "KRT5", "KRT17", "KRT8"), ncol = 4, combine = F)
+p1[[1]] + p2[[1]] + p2[[2]] + p2[[3]] + p2[[4]] + plot_layout(nrow = 1)
+# Write data files for paper for subclustering cluster 7 epithelial cells.
+df.umap.cluster7 <- as.data.frame(gcdata[["umap"]]@cell.embeddings)
+df.umap.cluster7[["IPBLPs"]] <- gcdata$figure
+df.umap.cluster7[["IPBLPs"]] <- gsub(TRUE, "IPBLPs", df.umap.cluster7[["IPBLPs"]])
+df.umap.cluster7[["IPBLPs"]] <- gsub(FALSE, "other", df.umap.cluster7[["IPBLPs"]])
+df.umap.cluster7[["TP63"]] <- gcdata[["RNA"]]@data["TP63", ]
+df.umap.cluster7[["KRT5"]] <- gcdata[["RNA"]]@data["KRT5", ]
+df.umap.cluster7[["KRT17"]] <- gcdata[["RNA"]]@data["KRT17", ]
+df.umap.cluster7[["KRT8"]] <- gcdata[["RNA"]]@data["KRT8", ]
+ggplot(df.umap.cluster7) + geom_point(mapping = aes(x = UMAP_1, y = UMAP_2, color = IPBLPs))
+ggplot(df.umap.cluster7) + geom_point(mapping = aes(x = UMAP_1, y = UMAP_2, color = KRT5))
+write.csv(df.umap.cluster7, file = paste0(figures.dir, figures.prefix, "_umap_coords_IPBLPs_markers.csv"))
+
+# Load subclustering of cluster 3
+k.suggest <- 4
+name.project <- "epithelial_cluster3" 
+Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+load(Rda.batchcorrect.liger.path)
+gcdata[["figure"]] <- gcdata$liger_clusters == 1
+p3 <- DimPlot(gcdata, reduction = "umap", label = F, group.by = "figure", cols = c("grey", "blue")) + NoLegend() + ggtitle("Subclustering airway cells")
+p4 <- FeaturePlot(gcdata, c("TP63", "KRT5", "KRT8"), ncol = 3, combine = F)
+p3[[1]] + p4[[1]] + p4[[2]] + p4[[3]] + plot_layout(nrow = 1)
+# Write data files for paper for subclustering cluster 3 epithelial cells.
+df.umap.cluster3 <- as.data.frame(gcdata[["umap"]]@cell.embeddings)
+df.umap.cluster3[["Basal cells"]] <- gcdata$figure
+df.umap.cluster3[["Basal cells"]] <- gsub(TRUE, "Basal cells", df.umap.cluster3[["Basal cells"]])
+df.umap.cluster3[["Basal cells"]] <- gsub(FALSE, "other", df.umap.cluster3[["Basal cells"]])
+df.umap.cluster3[["TP63"]] <- gcdata[["RNA"]]@data["TP63", ]
+df.umap.cluster3[["KRT5"]] <- gcdata[["RNA"]]@data["KRT5", ]
+df.umap.cluster3[["KRT8"]] <- gcdata[["RNA"]]@data["KRT8", ]
+ggplot(df.umap.cluster3) + geom_point(mapping = aes(x = UMAP_1, y = UMAP_2, color = `Basal cells`))
+ggplot(df.umap.cluster3) + geom_point(mapping = aes(x = UMAP_1, y = UMAP_2, color = TP63))
+write.csv(df.umap.cluster3, file = paste0(figures.dir, figures.prefix, "_umap_coords_Basal_markers.csv"))
+
+# Make figure for paper showing subcluster of cluster 7 on top and of cluster 3 on bottom.
+p1[[1]] + p2[[1]] + p2[[2]] + p2[[3]] + p2[[4]] + p3[[1]] + p4[[1]] + p4[[2]] + p4[[3]] + plot_layout(nrow = 2)
+ggsave(paste0(figures.dir, "epithelial_cluster7_cluster3_marker_genes.png"), width = 20, height = 8)
+ggsave(paste0(figures.dir, "epithelial_cluster7_cluster3_marker_genes.pdf"), width = 20, height = 8)
+```
+
+## Epithelial cells: Compare airway basal cells in cluster 3 to lineage negative progenetic KRT5 high cells in cluster 7
+```{r de_basal, eval = T}
+# First load metadata from subclustering of epithelial cells in cluster 3 above.
+k.suggest <- 4
+name.project <- "epithelial_cluster3"
+figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+df.metadata.cluster3 <- read.csv(file=paste0(figures.dir, figures.prefix, "_metadata_cluster3.csv"), row.names = 1)
+
+# Load metadata from subclustering of epithelial cells in cluster 7 above.
+k.suggest <- 4
+name.project <- "epithelial_cluster7"
+figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+df.metadata.cluster7 <- read.csv(file=paste0(figures.dir, figures.prefix, "_metadata_cluster7.csv"), row.names = 1)
+
+# Store barcodes for KRT5 high cells in cluster 7 and airway basal cells in cluster 3.
+# This gets added to the Single Cell Portal object, to allow users to look further at
+# these subpopulations.
+bcs.cluster3 <- rownames(df.metadata.cluster3[df.metadata.cluster3$liger_clusters == 1, ])
+bcs.cluster7 <- rownames(df.metadata.cluster7[df.metadata.cluster7$liger_clusters == 4, ])
+bcs.cluster3 <- data.frame(subcluster = rep("airway basal", length(bcs.cluster3)) , row.names = bcs.cluster3)
+bcs.cluster7 <- data.frame(subcluster = rep("IPBLP", length(bcs.cluster7)), row.names = bcs.cluster7)
+write.table(rbind(bcs.cluster3, bcs.cluster7), file = paste0(figures.dir, figures.prefix, "_bcs_subcluster3_airwaybasal_subcluster7_IPBLP.csv"), sep = ",", quote = F)
+
+# Second load object with subclustering for all epithelial cells.
+name.project <- "epithelial"
+print(name.project)
+k.suggest <- 8
+Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+load(Rda.batchcorrect.liger.path)
+Idents(gcdata) <- "liger_clusters"
+
+# Find KRT5 high cells (IPBLP) in cluster 7, and all cells in airway cluster 3
+cells.cluster3 <- rownames(df.metadata.cluster3)
+cells.cluster7 <- rownames(df.metadata.cluster7[df.metadata.cluster7$liger_clusters == 4, ])
+gcdata.sub <- subset(gcdata, cells = c(cells.cluster3, cells.cluster7))
+DimPlot(gcdata.sub, reduction = "umap", label = T, group.by = "liger_clusters")
+
+# Make metadata for cells from cluster 7 and from subclustering of cluster 3.
+df.subcluster <- gcdata.sub[[]][cells.cluster7, "liger_clusters", drop = F]
+df.subcluster$liger_clusters <- 7  # rename IPBLP cells as cluster 7
+df.subcluster <- rbind(df.subcluster, df.metadata.cluster3[, "liger_clusters", drop = F])
+colnames(df.subcluster) <- "subcluster"
+gcdata.sub <- AddMetaData(gcdata.sub, df.subcluster)
+DimPlot(gcdata.sub, reduction = "umap", label = T, group.by = "subcluster")
+
+# Compare KRT5 high IPBLP cells in cluster 7 to each of the subclusters (1-4) in airway cluster 3.
+for (i in seq(4)) {
+  markers <- FindMarkers(gcdata.sub, ident.1 = 7, ident.2 = i, group.by = "subcluster", max.cells.per.ident = 1500, min.pct = 0.1, logfc.threshold = 0.5, test.use = test, return.thresh = 0.1 / nrow(gcdata.sub), verbose = T)
+  markers.up <- markers %>% filter(avg_log2FC > 0, p_val_adj < 0.05)
+  write.csv(markers.up, file=paste0(figures.dir, "DE_genes_cluster7_IPBLP_airway_subcluster", i, ".csv"))
+}
+```
+
+## Color epithelial cells by IPBPLP signature
+```{r color_IPBPL, eval = T}
+# First load object with subclustering for epithelial cells.
+# Make names for cell subset specific variables.
+name.project <- "epithelial"
+print(name.project)
+
+# Paths to Rdata objects to load.
+k.suggest <- 8
+Rda.batchcorrect.liger.path <- paste0(proj.path, "/src/Rdata_orr/", date, "_", name.project, "_batchcorrect_liger_k", k.suggest, ".Rda")  # batch correct with LIGER
+load(Rda.batchcorrect.liger.path)
+
+# Load metadata from subclustering of epithelial cells in cluster 7 above.
+k.suggest <- 4
+name.project <- "epithelial_cluster7"
+figures.prefix <- paste("batchcorrect_liger_k", k.suggest, name.project, sep = "_")
+figures.dir <- paste0(proj.path, "/results/", date, "_", name.project, "_cumulus_cellbender_subcluster/")
+# Get IPBLP genes
+top100genes <- read.csv(file=paste0(figures.dir, figures.prefix, "_top_DE_genes.csv"))
+genes <- top100genes %>% dplyr::filter(cluster == 4) %>% pull(gene)
+genes <- as.character(genes)
+gcdata <- AddModuleScore(gcdata, list(genes), ctrl = 10, name = c("IPBLP"))
+gcdata[["IPBLP"]] <- gcdata$IPBLP1
+gcdata$IPBLP1 <- NULL
+
+gcdata <- AddModuleScore(gcdata, list(genes, gs.PATS$genesets[[3]]), ctrl = 10, name = c("IPBLP", "PATS"))
+gcdata[["IPBLP"]] <- gcdata$IPBLP1
+gcdata[["PATS"]] <- gcdata$PATS2
+gcdata$IPBLP1 <- NULL
+gcdata$PATS2 <- NULL
+
+MultipleFeaturePlot(gcdata, c("PATS", "IPBLP"), feature.type = "meta", pt.size = 0.5)
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_PATS_IPBLP.png"), width = 10, height = 6)
+ggsave(paste0(figures.dir, figures.prefix, "_UMAP_PATS_IPBLP.pdf"), width = 10, height = 6)
+
+# Write data files for paper for PATS and IBPLP scores on epithelial cells.
+df.umap <- as.data.frame(gcdata[["umap"]]@cell.embeddings)
+df.umap[["PATS"]] <- gcdata$PATS
+df.umap[["IPBLP"]] <- gcdata$IPBLP
+ggplot(df.umap) + geom_point(mapping = aes(x = UMAP_1, y = UMAP_2, color = PATS))
+ggplot(df.umap) + geom_point(mapping = aes(x = UMAP_1, y = UMAP_2, color = IPBLP))
+write.csv(df.umap, file = paste0(figures.dir, figures.prefix, "_umap_coords_PATS_score_IPBLP_score.csv"))
+```
