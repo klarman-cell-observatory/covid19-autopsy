@@ -6,6 +6,8 @@ The code is organized in directories by the analysis that were done:
 
 **DataPreprocessing** - Pre-processing done on lung sc-RNAseq and sn-RNAseq of lung samples, including Cell Bender for ambient RNA removal, doublet removal and quality control.
 
+**ExtendedFigure9** - Inflammation-specific programs in spatial lung samples. Scripts to generate results in Extended Figure 9.
+
 **LungAnnotationPrediction** - Code to predict cell type annotations in the lung.
 
 **LungBulk** - Analysis of bulk RNAseq data of lung samples including deconvolution.
@@ -14,7 +16,7 @@ The code is organized in directories by the analysis that were done:
 
 **OtherTissues** - Initial analysis of other tissues that were collected in this study.
 
-**SpatialAnalysis** - Spatial analysis of lung sampels. This directory includes a detailed README file to explain its content.
+**SpatialAnalysis** - Spatial analysis of lung samples. This directory includes a detailed README file to explain its content.
 
 **Sub-Clustering** - Manual annotaitons of lung cell types and sub-clusterings of the following main lineages: endotheila cells, B+Plasma cells, T+NK cells and myeloid cells.
 
